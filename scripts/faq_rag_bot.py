@@ -358,10 +358,14 @@ def answer_chat_payload(
     if not contexts:
         return []
     if dry_run:
-        return ["__DRY_RUN_MINIMAX_PROMPT__" for _ in contexts]
+        return [_format_batch_reply(context, "__DRY_RUN_MINIMAX_PROMPT__") for context in contexts]
 
     answers = _parse_reply_array(call_minimax(build_batch_prompt(contexts)), expected_count=len(contexts))
-    return [answer for answer in answers if answer and not _is_no_reply_answer(answer)]
+    replies: list[str] = []
+    for context, answer in zip(contexts, answers):
+        if answer and not _is_no_reply_answer(answer):
+            replies.append(_format_batch_reply(context, answer))
+    return replies
 
 
 def _answer_context(question: str, index: dict[str, Any], *, top_k: int = 5) -> dict[str, Any]:
@@ -478,6 +482,7 @@ def build_batch_prompt(contexts: list[dict[str, Any]]) -> str:
         "你是“一骑红尘：荔枝争运战”的群聊 FAQ 客服。\n"
         "下面每个问题都已经通过本地资料门禁；只能根据每个问题自己的参考材料回答。\n"
         "必须只输出 JSON 字符串数组，不要输出 Markdown、解释、对象或额外文字。\n"
+        "数组元素只填写答案本身，不要重复问题；程序会自动加上“问题”引用前缀。\n"
         "数组长度必须等于问题数量，顺序必须与问题顺序一致。\n"
         "如果某个问题的材料仍不足以回答，该位置输出空字符串，不要输出“不回复”。\n"
         "回答要求：中文；详略得当；简单问题用 1 句；复杂规则、流程、计分或字段问题可用 2 到 4 句；仍需清晰干练。\n"
@@ -721,6 +726,12 @@ def _candidate_questions(content: str) -> list[str]:
 def _is_no_reply_answer(answer: str) -> bool:
     normalized = re.sub(r"[\s\"'`“”‘’\[\]（）()。.!！?？，,、：:；;]+", "", answer)
     return normalized == NO_REPLY
+
+
+def _format_batch_reply(context: dict[str, Any], answer: str) -> str:
+    question = str(context.get("normalizedQuestion") or "").strip()
+    question = question.strip("“”\"'`")
+    return f"“{question}” ---- {answer.strip()}"
 
 
 def _parse_reply_array(raw: str, *, expected_count: int) -> list[str]:

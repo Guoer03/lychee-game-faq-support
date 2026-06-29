@@ -1,4 +1,4 @@
 interface:
   display_name: "荔枝游戏FAQ客服"
   short_description: "从群聊记忆和最近30条消息中挑选游戏机制问题并详略得当地回复"
-  default_prompt: "使用 $lychee-game-faq-support 读取群聊记忆和最近30条聊天记录，只输出需要回复的 JSON 字符串数组；无依据或不需要回复的消息直接跳过，不要输出不回复。"
+  default_prompt: "使用 $lychee-game-faq-support 读取群聊记忆和最近30条聊天记录，只输出需要回复的 JSON 字符串数组；每项格式为“问题” ---- 答案；无依据或不需要回复的消息直接跳过，不要输出不回复。"

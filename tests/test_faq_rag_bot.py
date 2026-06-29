@@ -116,7 +116,7 @@ class FaqRagBotTest(unittest.TestCase):
 
         replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
 
-        self.assertEqual(replies, ["__DRY_RUN_MINIMAX_PROMPT__"])
+        self.assertEqual(replies, ["“过所和官凭有没有隐藏效果差异” ---- __DRY_RUN_MINIMAX_PROMPT__"])
 
     def test_chat_payload_only_considers_latest_30_messages(self) -> None:
         index = faq_rag_bot.build_index()
@@ -140,7 +140,13 @@ class FaqRagBotTest(unittest.TestCase):
 
         replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
 
-        self.assertEqual(replies, ["__DRY_RUN_MINIMAX_PROMPT__", "__DRY_RUN_MINIMAX_PROMPT__"])
+        self.assertEqual(
+            replies,
+            [
+                "“过所和官凭有没有隐藏效果差异” ---- __DRY_RUN_MINIMAX_PROMPT__",
+                "“最后怎么算分” ---- __DRY_RUN_MINIMAX_PROMPT__",
+            ],
+        )
 
     def test_chat_payload_splits_consecutive_questions_and_skips_unsupported_parts(self) -> None:
         index = faq_rag_bot.build_index()
@@ -153,7 +159,7 @@ class FaqRagBotTest(unittest.TestCase):
 
         replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
 
-        self.assertEqual(replies, ["__DRY_RUN_MINIMAX_PROMPT__"])
+        self.assertEqual(replies, ["“MOVE 动作怎么发” ---- __DRY_RUN_MINIMAX_PROMPT__"])
 
     def test_no_reply_variants_are_never_included_in_batch_output(self) -> None:
         original_call_minimax = faq_rag_bot.call_minimax
@@ -200,9 +206,26 @@ class FaqRagBotTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertEqual(
                 replies,
-                ["过所和官凭没有隐藏效果差异。", "MOVE 动作需要提交目标节点。"],
+                [
+                    "“过所和官凭有没有隐藏效果差异” ---- 过所和官凭没有隐藏效果差异。",
+                    "“MOVE 动作怎么发” ---- MOVE 动作需要提交目标节点。",
+                ],
             )
             self.assertIn("JSON 字符串数组", calls[0])
+        finally:
+            faq_rag_bot.call_minimax = original_call_minimax
+
+    def test_batch_replies_quote_the_normalized_user_question(self) -> None:
+        original_call_minimax = faq_rag_bot.call_minimax
+        try:
+            faq_rag_bot.call_minimax = lambda prompt: '["按最终总分结算。"]'
+
+            replies = faq_rag_bot.answer_chat_payload(
+                {"messages": [{"content": "@客服 我想问一下，最后到底怎么算分呀？谢谢"}]},
+                index=faq_rag_bot.build_index(),
+            )
+
+            self.assertEqual(replies, ["“最后怎么算分” ---- 按最终总分结算。"])
         finally:
             faq_rag_bot.call_minimax = original_call_minimax
 
