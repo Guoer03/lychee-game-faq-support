@@ -1,4 +1,4 @@
 interface:
   display_name: "荔枝游戏FAQ客服"
-  short_description: "只基于官方材料回答游戏机制问题"
-  default_prompt: "使用 $lychee-game-faq-support 简洁回答群聊里的荔枝游戏规则问题。"
+  short_description: "从群聊记忆和最近30条消息中挑选游戏机制问题并简洁回复"
+  default_prompt: "使用 $lychee-game-faq-support 读取群聊记忆和最近30条聊天记录，只输出需要回复的 JSON 字符串数组。"

@@ -103,6 +103,45 @@ class FaqRagBotTest(unittest.TestCase):
             ],
         )
 
+    def test_chat_payload_returns_reply_array_for_supported_messages_only(self) -> None:
+        index = faq_rag_bot.build_index()
+        payload = {
+            "memory": "群里最近在讨论一骑红尘比赛规则。",
+            "messages": [
+                {"id": "m1", "sender": "A", "content": "平台上游戏回放很卡怎么办？"},
+                {"id": "m2", "sender": "B", "content": "过所和官凭有没有隐藏效果差异？"},
+                {"id": "m3", "sender": "C", "content": "冠军奖金什么时候发？"},
+            ],
+        }
+
+        replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
+
+        self.assertEqual(replies, ["__DRY_RUN_MINIMAX_PROMPT__"])
+
+    def test_chat_payload_only_considers_latest_30_messages(self) -> None:
+        index = faq_rag_bot.build_index()
+        messages = [{"content": "最后怎么算分？"}]
+        messages.extend({"content": f"普通聊天 {i}"} for i in range(30))
+
+        replies = faq_rag_bot.answer_chat_payload({"memory": "", "messages": messages}, index=index, dry_run=True)
+
+        self.assertEqual(replies, [])
+
+    def test_chat_payload_accepts_common_message_record_fields(self) -> None:
+        index = faq_rag_bot.build_index()
+        payload = {
+            "memory": {},
+            "messages": [
+                "过所和官凭有没有隐藏效果差异？",
+                {"text": "最后怎么算分？"},
+                {"message": "平台什么时候结束？"},
+            ],
+        }
+
+        replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
+
+        self.assertEqual(replies, ["__DRY_RUN_MINIMAX_PROMPT__", "__DRY_RUN_MINIMAX_PROMPT__"])
+
 
 if __name__ == "__main__":
     unittest.main()

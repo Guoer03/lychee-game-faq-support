@@ -357,6 +357,27 @@ def answer_from_index(
     }
 
 
+def answer_chat_payload(
+    payload: dict[str, Any],
+    *,
+    index: dict[str, Any] | None = None,
+    dry_run: bool = False,
+    top_k: int = 5,
+) -> list[str]:
+    active_index = index or load_index()
+    replies: list[str] = []
+    for record in _chat_messages(payload)[-30:]:
+        content = _message_content(record)
+        if not content:
+            continue
+        result = answer_from_index(content, index=active_index, dry_run=dry_run, top_k=top_k)
+        answer = str(result.get("answer") or "").strip()
+        if not answer or answer == NO_REPLY:
+            continue
+        replies.append(answer)
+    return replies
+
+
 def retrieve(question: str, index: dict[str, Any], *, top_k: int = 5,
              source_group_filter: str | None = None) -> list[dict[str, Any]]:
     query_text = "\n".join(expand_query(question))
@@ -622,6 +643,34 @@ def _asks_score_overview(question: str) -> bool:
     )
 
 
+def _chat_messages(payload: dict[str, Any]) -> list[Any]:
+    for key in ("messages", "latestMessages", "chatRecords", "records"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _message_content(record: Any) -> str:
+    if isinstance(record, str):
+        return record.strip()
+    if not isinstance(record, dict):
+        return ""
+    for key in ("content", "text", "message", "body"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _read_json_payload(path: str) -> dict[str, Any]:
+    text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError("群聊输入 JSON 必须是对象。")
+    return payload
+
+
 def parse_args() -> argparse.Namespace:
     parser = ChineseArgumentParser(description="运行荔枝游戏 FAQ 的严格非向量检索和证据门禁。", add_help=False)
     parser._positionals.title = "位置参数"
@@ -629,6 +678,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-h", "--help", action="help", help="显示帮助信息并退出。")
     parser.add_argument("question", nargs="?", help="群聊问题。")
     parser.add_argument("--build-index", action="store_true", help="构建并保存本地 JSON 索引。")
+    parser.add_argument("--chat-json", help="读取群聊批量输入 JSON 文件；使用 - 表示从 stdin 读取。")
     parser.add_argument("--index", default=str(INDEX_PATH), help="JSON 索引路径。")
     parser.add_argument("--dry-run", action="store_true", help="不调用 MiniMax，只返回检索资料块和 prompt。")
     parser.add_argument("--json", action="store_true", help="输出结构化 JSON。")
@@ -643,8 +693,18 @@ def main() -> int:
         index = save_index(index_path)
         print(json.dumps({"chunks": index["count"], "index": str(index_path)}, ensure_ascii=False))
         return 0
+    if args.chat_json:
+        index = load_index(index_path)
+        replies = answer_chat_payload(
+            _read_json_payload(args.chat_json),
+            index=index,
+            dry_run=args.dry_run,
+            top_k=args.top_k,
+        )
+        print(json.dumps(replies, ensure_ascii=False))
+        return 0
     if not args.question:
-        print("除非使用 --build-index，否则必须提供问题。", file=sys.stderr)
+        print("除非使用 --build-index 或 --chat-json，否则必须提供问题。", file=sys.stderr)
         return 2
     index = load_index(index_path)
     result = answer_from_index(args.question, index=index, dry_run=args.dry_run, top_k=args.top_k)
