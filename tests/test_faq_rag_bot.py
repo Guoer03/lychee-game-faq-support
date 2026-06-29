@@ -172,8 +172,11 @@ class FaqRagBotTest(unittest.TestCase):
     def test_prompt_requires_answer_length_to_match_question_complexity(self) -> None:
         prompt = faq_rag_bot.build_prompt("最后怎么算分？", [])
 
+        self.assertIn("详略得当", prompt)
         self.assertIn("简单问题", prompt)
         self.assertIn("复杂规则", prompt)
+        self.assertIn("清晰干练", prompt)
+        self.assertNotIn("简洁干练", prompt)
 
     def test_batch_generation_calls_minimax_once_for_multiple_supported_replies(self) -> None:
         calls = []
