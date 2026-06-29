@@ -1,0 +1,4 @@
+interface:
+  display_name: "荔枝游戏FAQ客服"
+  short_description: "只基于官方材料回答游戏机制问题"
+  default_prompt: "使用 $lychee-game-faq-support 简洁回答群聊里的荔枝游戏规则问题。"
