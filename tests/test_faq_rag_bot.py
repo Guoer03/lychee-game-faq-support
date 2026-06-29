@@ -142,6 +142,39 @@ class FaqRagBotTest(unittest.TestCase):
 
         self.assertEqual(replies, ["__DRY_RUN_MINIMAX_PROMPT__", "__DRY_RUN_MINIMAX_PROMPT__"])
 
+    def test_chat_payload_splits_consecutive_questions_and_skips_unsupported_parts(self) -> None:
+        index = faq_rag_bot.build_index()
+        payload = {
+            "memory": "用户连续问了两个问题。",
+            "messages": [
+                {"content": "平台上游戏回放很卡怎么办？MOVE 动作怎么发？"},
+            ],
+        }
+
+        replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
+
+        self.assertEqual(replies, ["__DRY_RUN_MINIMAX_PROMPT__"])
+
+    def test_no_reply_variants_are_never_included_in_batch_output(self) -> None:
+        original_call_minimax = faq_rag_bot.call_minimax
+        try:
+            faq_rag_bot.call_minimax = lambda prompt: " “不回复”。 "
+
+            replies = faq_rag_bot.answer_chat_payload(
+                {"messages": [{"content": "最后怎么算分？"}]},
+                index=faq_rag_bot.build_index(),
+            )
+
+            self.assertEqual(replies, [])
+        finally:
+            faq_rag_bot.call_minimax = original_call_minimax
+
+    def test_prompt_requires_answer_length_to_match_question_complexity(self) -> None:
+        prompt = faq_rag_bot.build_prompt("最后怎么算分？", [])
+
+        self.assertIn("简单问题", prompt)
+        self.assertIn("复杂规则", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

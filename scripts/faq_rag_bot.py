@@ -345,7 +345,7 @@ def answer_from_index(
         }
 
     answer = call_minimax(prompt)
-    if not answer.strip():
+    if not answer.strip() or _is_no_reply_answer(answer):
         answer = NO_REPLY
     return {
         "answer": answer.strip(),
@@ -370,11 +370,12 @@ def answer_chat_payload(
         content = _message_content(record)
         if not content:
             continue
-        result = answer_from_index(content, index=active_index, dry_run=dry_run, top_k=top_k)
-        answer = str(result.get("answer") or "").strip()
-        if not answer or answer == NO_REPLY:
-            continue
-        replies.append(answer)
+        for question in _candidate_questions(content):
+            result = answer_from_index(question, index=active_index, dry_run=dry_run, top_k=top_k)
+            answer = str(result.get("answer") or "").strip()
+            if not answer or _is_no_reply_answer(answer):
+                continue
+            replies.append(answer)
     return replies
 
 
@@ -432,7 +433,8 @@ def build_prompt(question: str, chunks: list[dict[str, Any]]) -> str:
         "只能根据【参考材料】回答，不能使用常识、推测、旧记忆或外部信息。\n"
         "如果参考材料不足以回答，必须只输出：不回复\n"
         "如果问题不属于游戏机制或通信协议，必须只输出：不回复\n"
-        "回答要求：中文；1 到 3 句；简洁干练；不解释检索过程；不引用材料名，除非用户问出处。\n\n"
+        "回答要求：中文；详略得当；简单问题用 1 句；复杂规则、流程、计分或字段问题可用 2 到 4 句；仍需简洁干练。\n"
+        "不要解释检索过程；不要引用材料名，除非用户问出处。\n\n"
         "【参考材料】\n"
         + "\n\n".join(materials)
         + "\n\n【用户问题】\n"
@@ -661,6 +663,20 @@ def _message_content(record: Any) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _candidate_questions(content: str) -> list[str]:
+    pieces = [
+        piece.strip()
+        for piece in re.split(r"(?<=[？?。！!；;])\s*|\n+", content)
+        if piece.strip()
+    ]
+    return pieces or [content.strip()]
+
+
+def _is_no_reply_answer(answer: str) -> bool:
+    normalized = re.sub(r"[\s\"'`“”‘’\[\]（）()。.!！?？，,、：:；;]+", "", answer)
+    return normalized == NO_REPLY
 
 
 def _read_json_payload(path: str) -> dict[str, Any]:
