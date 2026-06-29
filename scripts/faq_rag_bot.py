@@ -302,46 +302,26 @@ def answer_from_index(
     top_k: int = 5,
 ) -> dict[str, Any]:
     active_index = index or load_index()
-    normalized_question = summarize_question(question)
-    category, reason = classify_question(normalized_question)
-    if category != "mechanism":
+    context = _answer_context(question, active_index, top_k=top_k)
+    if not context["gate"]["allowed"]:
         return {
             "answer": NO_REPLY,
-            "gate": {"allowed": False, "reason": reason},
-            "chunks": [],
+            "gate": context["gate"],
+            "gateAttempts": context.get("gateAttempts", []),
+            "chunks": context["chunks"],
             "prompt": "",
-            "normalizedQuestion": normalized_question,
+            "normalizedQuestion": context["normalizedQuestion"],
         }
 
-    attempts = []
-    ranked: list[dict[str, Any]] = []
-    gate: dict[str, Any] = {"allowed": False, "reason": "no_retrieval", "sourceGroup": "reference"}
-    for group in ("faq", "reference"):
-        ranked = retrieve(normalized_question, active_index, top_k=top_k, source_group_filter=group)
-        gate = evidence_gate(normalized_question, ranked)
-        gate["sourceGroup"] = group
-        attempts.append(gate)
-        if gate["allowed"]:
-            break
-    if not gate["allowed"]:
-        return {
-            "answer": NO_REPLY,
-            "gate": gate,
-            "gateAttempts": attempts,
-            "chunks": ranked,
-            "prompt": "",
-            "normalizedQuestion": normalized_question,
-        }
-
-    prompt = build_prompt(normalized_question, ranked)
+    prompt = build_prompt(context["normalizedQuestion"], context["chunks"])
     if dry_run:
         return {
             "answer": "__DRY_RUN_MINIMAX_PROMPT__",
-            "gate": gate,
-            "gateAttempts": attempts,
-            "chunks": ranked,
+            "gate": context["gate"],
+            "gateAttempts": context["gateAttempts"],
+            "chunks": context["chunks"],
             "prompt": prompt,
-            "normalizedQuestion": normalized_question,
+            "normalizedQuestion": context["normalizedQuestion"],
         }
 
     answer = call_minimax(prompt)
@@ -349,11 +329,11 @@ def answer_from_index(
         answer = NO_REPLY
     return {
         "answer": answer.strip(),
-        "gate": gate,
-        "gateAttempts": attempts,
-        "chunks": ranked,
+        "gate": context["gate"],
+        "gateAttempts": context["gateAttempts"],
+        "chunks": context["chunks"],
         "prompt": prompt,
-        "normalizedQuestion": normalized_question,
+        "normalizedQuestion": context["normalizedQuestion"],
     }
 
 
@@ -365,18 +345,52 @@ def answer_chat_payload(
     top_k: int = 5,
 ) -> list[str]:
     active_index = index or load_index()
-    replies: list[str] = []
+    contexts: list[dict[str, Any]] = []
     for record in _chat_messages(payload)[-30:]:
         content = _message_content(record)
         if not content:
             continue
         for question in _candidate_questions(content):
-            result = answer_from_index(question, index=active_index, dry_run=dry_run, top_k=top_k)
-            answer = str(result.get("answer") or "").strip()
-            if not answer or _is_no_reply_answer(answer):
-                continue
-            replies.append(answer)
-    return replies
+            context = _answer_context(question, active_index, top_k=min(top_k, 3))
+            if context["gate"]["allowed"]:
+                contexts.append(context)
+
+    if not contexts:
+        return []
+    if dry_run:
+        return ["__DRY_RUN_MINIMAX_PROMPT__" for _ in contexts]
+
+    answers = _parse_reply_array(call_minimax(build_batch_prompt(contexts)), expected_count=len(contexts))
+    return [answer for answer in answers if answer and not _is_no_reply_answer(answer)]
+
+
+def _answer_context(question: str, index: dict[str, Any], *, top_k: int = 5) -> dict[str, Any]:
+    normalized_question = summarize_question(question)
+    category, reason = classify_question(normalized_question)
+    if category != "mechanism":
+        return {
+            "gate": {"allowed": False, "reason": reason},
+            "gateAttempts": [],
+            "chunks": [],
+            "normalizedQuestion": normalized_question,
+        }
+
+    attempts = []
+    ranked: list[dict[str, Any]] = []
+    gate: dict[str, Any] = {"allowed": False, "reason": "no_retrieval", "sourceGroup": "reference"}
+    for group in ("faq", "reference"):
+        ranked = retrieve(normalized_question, index, top_k=top_k, source_group_filter=group)
+        gate = evidence_gate(normalized_question, ranked)
+        gate["sourceGroup"] = group
+        attempts.append(gate)
+        if gate["allowed"]:
+            break
+    return {
+        "gate": gate,
+        "gateAttempts": attempts,
+        "chunks": ranked,
+        "normalizedQuestion": normalized_question,
+    }
 
 
 def retrieve(question: str, index: dict[str, Any], *, top_k: int = 5,
@@ -439,6 +453,36 @@ def build_prompt(question: str, chunks: list[dict[str, Any]]) -> str:
         + "\n\n".join(materials)
         + "\n\n【用户问题】\n"
         + question
+    )
+
+
+def build_batch_prompt(contexts: list[dict[str, Any]]) -> str:
+    cases = []
+    for case_index, context in enumerate(contexts, start=1):
+        materials = []
+        for material_index, chunk in enumerate(context["chunks"], start=1):
+            heading = " / ".join(chunk.get("headingPath") or [])
+            materials.append(
+                f"[材料{case_index}-{material_index}]\n"
+                f"来源：{chunk['source']}:{chunk['lineStart']}-{chunk['lineEnd']}\n"
+                f"标题：{heading}\n"
+                f"{chunk['content']}"
+            )
+        cases.append(
+            f"【问题{case_index}】\n"
+            f"{context['normalizedQuestion']}\n\n"
+            f"【问题{case_index}参考材料】\n"
+            + "\n\n".join(materials)
+        )
+    return (
+        "你是“一骑红尘：荔枝争运战”的群聊 FAQ 客服。\n"
+        "下面每个问题都已经通过本地资料门禁；只能根据每个问题自己的参考材料回答。\n"
+        "必须只输出 JSON 字符串数组，不要输出 Markdown、解释、对象或额外文字。\n"
+        "数组长度必须等于问题数量，顺序必须与问题顺序一致。\n"
+        "如果某个问题的材料仍不足以回答，该位置输出空字符串，不要输出“不回复”。\n"
+        "回答要求：中文；详略得当；简单问题用 1 句；复杂规则、流程、计分或字段问题可用 2 到 4 句；仍需简洁干练。\n"
+        "不要解释检索过程；不要引用材料名，除非用户问出处。\n\n"
+        + "\n\n---\n\n".join(cases)
     )
 
 
@@ -677,6 +721,45 @@ def _candidate_questions(content: str) -> list[str]:
 def _is_no_reply_answer(answer: str) -> bool:
     normalized = re.sub(r"[\s\"'`“”‘’\[\]（）()。.!！?？，,、：:；;]+", "", answer)
     return normalized == NO_REPLY
+
+
+def _parse_reply_array(raw: str, *, expected_count: int) -> list[str]:
+    text = (raw or "").strip()
+    if not text or _is_no_reply_answer(text):
+        return []
+
+    candidates = [text]
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.S | re.I)
+    if fenced:
+        candidates.insert(0, fenced.group(1).strip())
+    bracketed = re.search(r"\[.*\]", text, flags=re.S)
+    if bracketed:
+        candidates.append(bracketed.group(0))
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return _clean_reply_items(parsed)
+        if isinstance(parsed, str) and expected_count == 1:
+            return _clean_reply_items([parsed])
+
+    if expected_count == 1:
+        return _clean_reply_items([text])
+    return []
+
+
+def _clean_reply_items(items: list[Any]) -> list[str]:
+    replies: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        answer = item.strip()
+        if answer and not _is_no_reply_answer(answer):
+            replies.append(answer)
+    return replies
 
 
 def _read_json_payload(path: str) -> dict[str, Any]:

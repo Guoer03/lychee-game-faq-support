@@ -175,6 +175,48 @@ class FaqRagBotTest(unittest.TestCase):
         self.assertIn("简单问题", prompt)
         self.assertIn("复杂规则", prompt)
 
+    def test_batch_generation_calls_minimax_once_for_multiple_supported_replies(self) -> None:
+        calls = []
+        original_call_minimax = faq_rag_bot.call_minimax
+        try:
+            def fake_call_minimax(prompt: str) -> str:
+                calls.append(prompt)
+                return '["过所和官凭没有隐藏效果差异。", "MOVE 动作需要提交目标节点。"]'
+
+            faq_rag_bot.call_minimax = fake_call_minimax
+            replies = faq_rag_bot.answer_chat_payload(
+                {
+                    "messages": [
+                        {"content": "过所和官凭有没有隐藏效果差异？"},
+                        {"content": "MOVE 动作怎么发？"},
+                    ]
+                },
+                index=faq_rag_bot.build_index(),
+            )
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(
+                replies,
+                ["过所和官凭没有隐藏效果差异。", "MOVE 动作需要提交目标节点。"],
+            )
+            self.assertIn("JSON 字符串数组", calls[0])
+        finally:
+            faq_rag_bot.call_minimax = original_call_minimax
+
+    def test_batch_generation_skips_minimax_when_no_message_is_supported(self) -> None:
+        original_call_minimax = faq_rag_bot.call_minimax
+        try:
+            faq_rag_bot.call_minimax = lambda prompt: self.fail("不应调用 MiniMax")
+
+            replies = faq_rag_bot.answer_chat_payload(
+                {"messages": [{"content": "平台上游戏回放很卡怎么办？"}]},
+                index=faq_rag_bot.build_index(),
+            )
+
+            self.assertEqual(replies, [])
+        finally:
+            faq_rag_bot.call_minimax = original_call_minimax
+
 
 if __name__ == "__main__":
     unittest.main()
