@@ -30,6 +30,7 @@ FAQ_SOURCE_NAMES = {
 }
 
 NO_REPLY = "不回复"
+UNCERTAIN_TASK_BOOK_REPLY = "这个问题不太确定 @赵星 看下呢"
 REPLY_MARKER_RE = re.compile(r"[\[【]\s*(?:已回复|未回复)\s*[\]】]")
 ANSWER_STYLE_GUIDE = (
     "回答要求：中文；详略得当；简单问题用 1 句；复杂规则、流程、计分或字段问题可用 2 到 4 句；仍需清晰干练。\n"
@@ -166,6 +167,50 @@ MECHANISM_HINTS = set(DOMAIN_TERMS) | {
     "合法",
 }
 
+TASK_BOOK_UNCERTAIN_HINTS = set(DOMAIN_TERMS) | {
+    "小分队",
+    "终局急策",
+    "急策",
+    "水路",
+    "山路",
+    "陆路",
+    "关隘",
+    "宫门",
+    "终点",
+    "起点",
+    "障碍",
+    "清障",
+    "保鲜",
+    "冰鉴",
+    "快马",
+    "短驿马",
+    "驿马",
+    "护送",
+    "荔枝",
+    "规则",
+    "玩法",
+}
+
+PROTOCOL_HINTS = {
+    "通信协议",
+    "协议",
+    "字段",
+    "报文",
+    "JSON",
+    "inquire",
+    "start",
+    "action",
+    "replay",
+    "over",
+    "actionResults",
+    "matchId",
+    "teamId",
+    "playerId",
+    "targetNodeId",
+    "remainRound",
+    "remainingRound",
+}
+
 
 class ChineseArgumentParser(argparse.ArgumentParser):
     def format_usage(self) -> str:
@@ -236,6 +281,22 @@ def classify_question(question: str) -> tuple[str, str]:
     if re.search(r"[A-Z_]{3,}|[a-z]+[A-Z][A-Za-z]+", normalized):
         return "mechanism", "protocol_like"
     return "out_of_scope", "out_of_scope"
+
+
+def _is_task_book_related_question(question: str) -> bool:
+    if not question.strip():
+        return False
+    if any(pattern in question for pattern in OUT_OF_SCOPE_PATTERNS):
+        return False
+    if _is_protocol_related_question(question):
+        return False
+    return any(hint in question for hint in TASK_BOOK_UNCERTAIN_HINTS)
+
+
+def _is_protocol_related_question(question: str) -> bool:
+    if any(hint in question for hint in PROTOCOL_HINTS):
+        return True
+    return bool(re.search(r"[A-Z_]{3,}|[a-z]+[A-Z][A-Za-z]+", question))
 
 
 def summarize_question(question: str) -> str:
@@ -310,8 +371,9 @@ def answer_from_index(
     active_index = index or load_index()
     context = _answer_context(question, active_index, top_k=top_k)
     if not context["gate"]["allowed"]:
+        answer = UNCERTAIN_TASK_BOOK_REPLY if _should_escalate_context(context) else NO_REPLY
         return {
-            "answer": NO_REPLY,
+            "answer": answer,
             "gate": context["gate"],
             "gateAttempts": context.get("gateAttempts", []),
             "chunks": context["chunks"],
@@ -351,7 +413,7 @@ def answer_chat_payload(
     top_k: int = 5,
 ) -> list[str]:
     active_index = index or load_index()
-    contexts: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
     for record in _chat_messages(payload)[-30:]:
         content = _message_content(record)
         if not content:
@@ -362,16 +424,34 @@ def answer_chat_payload(
         for question in _candidate_questions(content):
             context = _answer_context(question, active_index, top_k=min(top_k, 3))
             if context["gate"]["allowed"]:
-                contexts.append(context)
+                items.append({"kind": "model", "context": context})
+            elif _should_escalate_context(context):
+                items.append({"kind": "fallback", "context": context})
 
-    if not contexts:
+    if not items:
         return []
     if dry_run:
-        return [_format_batch_reply(context, "__DRY_RUN_MINIMAX_PROMPT__") for context in contexts]
+        return [
+            _format_batch_reply(
+                item["context"],
+                UNCERTAIN_TASK_BOOK_REPLY if item["kind"] == "fallback" else "__DRY_RUN_MINIMAX_PROMPT__",
+            )
+            for item in items
+        ]
 
-    answers = _parse_reply_array(call_minimax(build_batch_prompt(contexts)), expected_count=len(contexts))
+    model_contexts = [item["context"] for item in items if item["kind"] == "model"]
+    model_answers = iter(
+        _parse_reply_array(call_minimax(build_batch_prompt(model_contexts)), expected_count=len(model_contexts))
+        if model_contexts
+        else []
+    )
     replies: list[str] = []
-    for context, answer in zip(contexts, answers):
+    for item in items:
+        if item["kind"] == "fallback":
+            replies.append(_format_batch_reply(item["context"], UNCERTAIN_TASK_BOOK_REPLY))
+            continue
+        context = item["context"]
+        answer = next(model_answers, "")
         if answer and not _is_no_reply_answer(answer):
             replies.append(_format_batch_reply(context, answer))
     return replies
@@ -381,8 +461,9 @@ def _answer_context(question: str, index: dict[str, Any], *, top_k: int = 5) -> 
     normalized_question = summarize_question(question)
     category, reason = classify_question(normalized_question)
     if category != "mechanism":
+        escalate = _is_task_book_related_question(normalized_question)
         return {
-            "gate": {"allowed": False, "reason": reason},
+            "gate": {"allowed": False, "reason": "task_book_uncertain" if escalate else reason, "escalate": escalate},
             "gateAttempts": [],
             "chunks": [],
             "normalizedQuestion": normalized_question,
@@ -398,12 +479,19 @@ def _answer_context(question: str, index: dict[str, Any], *, top_k: int = 5) -> 
         attempts.append(gate)
         if gate["allowed"]:
             break
+    if not gate["allowed"] and _is_task_book_related_question(normalized_question):
+        gate["reason"] = "task_book_uncertain"
+        gate["escalate"] = True
     return {
         "gate": gate,
         "gateAttempts": attempts,
         "chunks": ranked,
         "normalizedQuestion": normalized_question,
     }
+
+
+def _should_escalate_context(context: dict[str, Any]) -> bool:
+    return bool(context.get("gate", {}).get("escalate"))
 
 
 def retrieve(question: str, index: dict[str, Any], *, top_k: int = 5,

@@ -41,6 +41,15 @@ class FaqRagBotTest(unittest.TestCase):
         self.assertEqual(result["answer"], "不回复")
         self.assertFalse(result["gate"]["allowed"])
 
+    def test_uncertain_task_book_question_escalates_to_zhao_xing(self) -> None:
+        index = faq_rag_bot.build_index()
+
+        result = faq_rag_bot.answer_from_index("小分队能不能偷对方荔枝？", index=index, dry_run=True)
+
+        self.assertEqual(result["answer"], "这个问题不太确定 @赵星 看下呢")
+        self.assertFalse(result["gate"]["allowed"])
+        self.assertTrue(result["gate"]["escalate"])
+
     def test_faq_sources_are_searched_before_task_book_and_protocol(self) -> None:
         index = faq_rag_bot.build_index()
 
@@ -117,6 +126,20 @@ class FaqRagBotTest(unittest.TestCase):
         replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
 
         self.assertEqual(replies, ["“过所和官凭有没有隐藏效果差异” ---- __DRY_RUN_MINIMAX_PROMPT__"])
+
+    def test_chat_payload_includes_escalation_for_uncertain_task_book_questions(self) -> None:
+        index = faq_rag_bot.build_index()
+        payload = {
+            "messages": [
+                {"content": "【未回复】平台上游戏回放很卡怎么办？"},
+                {"content": "【未回复】小分队能不能偷对方荔枝？"},
+                {"content": "【未回复】冠军奖金什么时候发？"},
+            ],
+        }
+
+        replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
+
+        self.assertEqual(replies, ["“小分队能不能偷对方荔枝” ---- 这个问题不太确定 @赵星 看下呢"])
 
     def test_chat_payload_only_considers_latest_30_messages(self) -> None:
         index = faq_rag_bot.build_index()
