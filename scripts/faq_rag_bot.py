@@ -30,6 +30,7 @@ FAQ_SOURCE_NAMES = {
 }
 
 NO_REPLY = "不回复"
+REPLY_MARKER_RE = re.compile(r"[\[【]\s*(?:已回复|未回复)\s*[\]】]")
 
 DOMAIN_TERMS = [
     "MOVE",
@@ -350,6 +351,9 @@ def answer_chat_payload(
         content = _message_content(record)
         if not content:
             continue
+        if _is_replied_record(record, content):
+            continue
+        content = _strip_reply_marker(content)
         for question in _candidate_questions(content):
             context = _answer_context(question, active_index, top_k=min(top_k, 3))
             if context["gate"]["allowed"]:
@@ -712,6 +716,26 @@ def _message_content(record: Any) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _is_replied_record(record: Any, content: str) -> bool:
+    if isinstance(record, dict):
+        for key in ("replyStatus", "reply_status", "status"):
+            value = record.get(key)
+            if isinstance(value, str):
+                if "已回复" in value:
+                    return True
+                if "未回复" in value:
+                    return False
+        for key in ("replied", "isReplied"):
+            value = record.get(key)
+            if isinstance(value, bool):
+                return value
+    return bool(re.search(r"[\[【]\s*已回复\s*[\]】]", content))
+
+
+def _strip_reply_marker(content: str) -> str:
+    return REPLY_MARKER_RE.sub("", content).strip()
 
 
 def _candidate_questions(content: str) -> list[str]:

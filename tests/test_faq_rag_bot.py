@@ -148,6 +148,35 @@ class FaqRagBotTest(unittest.TestCase):
             ],
         )
 
+    def test_chat_payload_skips_messages_marked_as_already_replied(self) -> None:
+        index = faq_rag_bot.build_index()
+        payload = {
+            "messages": [
+                {"content": "【已回复】最后怎么算分？"},
+                {"content": "【未回复】过所和官凭有没有隐藏效果差异？"},
+            ],
+        }
+
+        replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
+
+        self.assertEqual(
+            replies,
+            ["“过所和官凭有没有隐藏效果差异” ---- __DRY_RUN_MINIMAX_PROMPT__"],
+        )
+
+    def test_chat_payload_uses_structured_reply_status_fields(self) -> None:
+        index = faq_rag_bot.build_index()
+        payload = {
+            "messages": [
+                {"replyStatus": "已回复", "content": "最后怎么算分？"},
+                {"status": "未回复", "content": "MOVE 动作怎么发？"},
+            ],
+        }
+
+        replies = faq_rag_bot.answer_chat_payload(payload, index=index, dry_run=True)
+
+        self.assertEqual(replies, ["“MOVE 动作怎么发” ---- __DRY_RUN_MINIMAX_PROMPT__"])
+
     def test_chat_payload_splits_consecutive_questions_and_skips_unsupported_parts(self) -> None:
         index = faq_rag_bot.build_index()
         payload = {
