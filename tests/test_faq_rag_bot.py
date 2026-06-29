@@ -213,6 +213,30 @@ class FaqRagBotTest(unittest.TestCase):
         self.assertIn("清晰干练", prompt)
         self.assertNotIn("简洁干练", prompt)
 
+    def test_prompts_allow_grounded_summary_and_direct_inference(self) -> None:
+        chunk = {
+            "source": "一骑红尘：荔枝争运战 FAQ.md",
+            "lineStart": 1,
+            "lineEnd": 2,
+            "headingPath": ["FAQ"],
+            "content": "过所和官凭没有隐藏效果差异。",
+        }
+        single_prompt = faq_rag_bot.build_prompt("过所和官凭有什么区别？", [chunk])
+        batch_prompt = faq_rag_bot.build_batch_prompt(
+            [
+                {
+                    "normalizedQuestion": "过所和官凭有什么区别",
+                    "chunks": [chunk],
+                }
+            ]
+        )
+
+        for prompt in (single_prompt, batch_prompt):
+            self.assertIn("可以基于材料做归纳总结", prompt)
+            self.assertIn("直接推论", prompt)
+            self.assertIn("不要逐字复述材料", prompt)
+            self.assertIn("不能引入材料外", prompt)
+
     def test_batch_generation_calls_minimax_once_for_multiple_supported_replies(self) -> None:
         calls = []
         original_call_minimax = faq_rag_bot.call_minimax

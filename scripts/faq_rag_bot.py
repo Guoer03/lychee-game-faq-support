@@ -31,6 +31,11 @@ FAQ_SOURCE_NAMES = {
 
 NO_REPLY = "不回复"
 REPLY_MARKER_RE = re.compile(r"[\[【]\s*(?:已回复|未回复)\s*[\]】]")
+ANSWER_STYLE_GUIDE = (
+    "回答要求：中文；详略得当；简单问题用 1 句；复杂规则、流程、计分或字段问题可用 2 到 4 句；仍需清晰干练。\n"
+    "可以基于材料做归纳总结、合并多条规则并给出直接推论；不要逐字复述材料。\n"
+    "直接推论必须能由材料一步推出，不能引入材料外的新设定、常识、经验或猜测。\n"
+)
 
 DOMAIN_TERMS = [
     "MOVE",
@@ -455,7 +460,7 @@ def build_prompt(question: str, chunks: list[dict[str, Any]]) -> str:
         "只能根据【参考材料】回答，不能使用常识、推测、旧记忆或外部信息。\n"
         "如果参考材料不足以回答，必须只输出：不回复\n"
         "如果问题不属于游戏机制或通信协议，必须只输出：不回复\n"
-        "回答要求：中文；详略得当；简单问题用 1 句；复杂规则、流程、计分或字段问题可用 2 到 4 句；仍需清晰干练。\n"
+        f"{ANSWER_STYLE_GUIDE}"
         "不要解释检索过程；不要引用材料名，除非用户问出处。\n\n"
         "【参考材料】\n"
         + "\n\n".join(materials)
@@ -489,7 +494,7 @@ def build_batch_prompt(contexts: list[dict[str, Any]]) -> str:
         "数组元素只填写答案本身，不要重复问题；程序会自动加上“问题”引用前缀。\n"
         "数组长度必须等于问题数量，顺序必须与问题顺序一致。\n"
         "如果某个问题的材料仍不足以回答，该位置输出空字符串，不要输出“不回复”。\n"
-        "回答要求：中文；详略得当；简单问题用 1 句；复杂规则、流程、计分或字段问题可用 2 到 4 句；仍需清晰干练。\n"
+        f"{ANSWER_STYLE_GUIDE}"
         "不要解释检索过程；不要引用材料名，除非用户问出处。\n\n"
         + "\n\n---\n\n".join(cases)
     )
@@ -505,7 +510,7 @@ def call_minimax(prompt: str) -> str:
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "你是严格基于材料的中文 FAQ 客服。"},
+            {"role": "system", "content": "你是基于材料做归纳回答的中文 FAQ 客服。"},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.0,
